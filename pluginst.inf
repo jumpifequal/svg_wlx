@@ -1,0 +1,10 @@
+[plugininstall]
+type=wlx
+name=svg_wlx
+title=svg_wlx (SVG Viewer)
+description=SVG lister plugin for Total Commander, rendering via LunaSVG (text, clipPath, mask, pattern, use/symbol, CSS)
+file=svg_wlx.wlx
+defaultdir=svg_wlx
+defaultextension=svg;svgz
+defaultfilter=EXT="SVG" | EXT="SVGZ"
+version=2.0.2

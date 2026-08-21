@@ -1,0 +1,214 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build" ToolsVersion="17.0">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{4A6D8B0B-7B92-4E3E-9C09-6C9A9F0B2C11}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>svg_wlx</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <TargetExt>.wlx64</TargetExt>
+    <OutDir>$(SolutionDir)x64\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)x64\obj\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <TargetExt>.wlx</TargetExt>
+    <OutDir>$(SolutionDir)x32\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)x32\obj\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <TargetExt>.wlx</TargetExt>
+    <OutDir>$(SolutionDir)x32\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)x32\obj\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <TargetExt>.wlx64</TargetExt>
+    <OutDir>$(SolutionDir)x64\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)x64\obj\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;_CRT_SECURE_NO_WARNINGS;LUNASVG_BUILD_STATIC;PLUTOVG_BUILD_STATIC;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)third_party\lunasvg\include;$(ProjectDir)third_party\lunasvg\plutovg\include</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <ModuleDefinitionFile>src\svg_wlx.def</ModuleDefinitionFile>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;_CRT_SECURE_NO_WARNINGS;LUNASVG_BUILD_STATIC;PLUTOVG_BUILD_STATIC;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)third_party\lunasvg\include;$(ProjectDir)third_party\lunasvg\plutovg\include</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <ModuleDefinitionFile>src\svg_wlx.def</ModuleDefinitionFile>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_CRT_SECURE_NO_WARNINGS;LUNASVG_BUILD_STATIC;PLUTOVG_BUILD_STATIC;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)third_party\lunasvg\include;$(ProjectDir)third_party\lunasvg\plutovg\include</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+    </ClCompile>
+    <Link>
+      <ModuleDefinitionFile>src\svg_wlx.def</ModuleDefinitionFile>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_CRT_SECURE_NO_WARNINGS;LUNASVG_BUILD_STATIC;PLUTOVG_BUILD_STATIC;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)third_party\lunasvg\include;$(ProjectDir)third_party\lunasvg\plutovg\include</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+    </ClCompile>
+    <Link>
+      <ModuleDefinitionFile>src\svg_wlx.def</ModuleDefinitionFile>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="src\bmp_from_svg.h" />
+    <ClInclude Include="src\listplug.h" />
+    <ClInclude Include="src\pch.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\bmp_from_svg.cpp" />
+    <ClCompile Include="src\svg_wlx.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="third_party\lunasvg\include\lunasvg.h" />
+    <ClInclude Include="third_party\lunasvg\source\graphics.h" />
+    <ClInclude Include="third_party\lunasvg\source\svgelement.h" />
+    <ClInclude Include="third_party\lunasvg\source\svggeometryelement.h" />
+    <ClInclude Include="third_party\lunasvg\source\svglayoutstate.h" />
+    <ClInclude Include="third_party\lunasvg\source\svgpaintelement.h" />
+    <ClInclude Include="third_party\lunasvg\source\svgparserutils.h" />
+    <ClInclude Include="third_party\lunasvg\source\svgproperty.h" />
+    <ClInclude Include="third_party\lunasvg\source\svgrenderstate.h" />
+    <ClInclude Include="third_party\lunasvg\source\svgtextelement.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="third_party\lunasvg\source\graphics.cpp" />
+    <ClCompile Include="third_party\lunasvg\source\lunasvg.cpp" />
+    <ClCompile Include="third_party\lunasvg\source\svgelement.cpp" />
+    <ClCompile Include="third_party\lunasvg\source\svggeometryelement.cpp" />
+    <ClCompile Include="third_party\lunasvg\source\svglayoutstate.cpp" />
+    <ClCompile Include="third_party\lunasvg\source\svgpaintelement.cpp" />
+    <ClCompile Include="third_party\lunasvg\source\svgparser.cpp" />
+    <ClCompile Include="third_party\lunasvg\source\svgproperty.cpp" />
+    <ClCompile Include="third_party\lunasvg\source\svgrenderstate.cpp" />
+    <ClCompile Include="third_party\lunasvg\source\svgtextelement.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="third_party\lunasvg\plutovg\include\plutovg.h" />
+    <ClInclude Include="third_party\lunasvg\plutovg\source\plutovg-ft-math.h" />
+    <ClInclude Include="third_party\lunasvg\plutovg\source\plutovg-ft-raster.h" />
+    <ClInclude Include="third_party\lunasvg\plutovg\source\plutovg-ft-stroker.h" />
+    <ClInclude Include="third_party\lunasvg\plutovg\source\plutovg-ft-types.h" />
+    <ClInclude Include="third_party\lunasvg\plutovg\source\plutovg-private.h" />
+    <ClInclude Include="third_party\lunasvg\plutovg\source\plutovg-stb-image-write.h" />
+    <ClInclude Include="third_party\lunasvg\plutovg\source\plutovg-stb-image.h" />
+    <ClInclude Include="third_party\lunasvg\plutovg\source\plutovg-stb-truetype.h" />
+    <ClInclude Include="third_party\lunasvg\plutovg\source\plutovg-utils.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-blend.c" />
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-canvas.c" />
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-font.c" />
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-ft-math.c" />
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-ft-raster.c" />
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-ft-stroker.c" />
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-matrix.c" />
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-paint.c" />
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-path.c" />
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-rasterize.c" />
+    <ClCompile Include="third_party\lunasvg\plutovg\source\plutovg-surface.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" />
+    <None Include="LICENSE" />
+    <None Include="src\svg_wlx.def" />
+    <None Include="third_party\lunasvg\LICENSE" />
+    <None Include="third_party\lunasvg\plutovg\LICENSE" />
+    <None Include="third_party\lunasvg\plutovg\source\FTL.TXT" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

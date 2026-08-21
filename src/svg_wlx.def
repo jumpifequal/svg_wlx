@@ -1,0 +1,10 @@
+EXPORTS
+    ListCloseWindow
+    ListGetDetectString
+    ListGetPreviewBitmapW
+    ListLoad
+    ListLoadNext
+    ListLoadNextW
+    ListLoadW
+    ListSendCommand
+    ListSetDefaultParams

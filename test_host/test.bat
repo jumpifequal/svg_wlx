@@ -1,0 +1,1 @@
+test_host.exe ..\x64\Release\svg_wlx.wlx64 ..\src\svg.svg 1600 900 svg.bmp

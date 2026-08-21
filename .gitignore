@@ -1,0 +1,10 @@
+/build
+/x32
+/x64
+/dist
+test_host/*.exe
+test_host/*.obj
+test_host/*.bmp
+*.user
+*.suo
+.vs/
