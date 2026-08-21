@@ -1,0 +1,4 @@
+#include "resource.h"
+
+IDC_CLOSED_HAND CURSOR "res\\closed_hand.cur"
+IDC_OPEN_HAND   CURSOR "res\\open_hand.cur"

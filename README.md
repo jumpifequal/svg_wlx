@@ -8,7 +8,8 @@
 svg_wlx is a [Total Commander](https://www.ghisler.com/index.htm) lister
 plugin for viewing SVG files. This is a fork of the original
 [svg_wlx by Rocco Matano](https://github.com/RoccoMatano/svg_wlx); see
-[DIST_README.md](DIST_README.md) for what changed in this fork. It renders SVGs using
+[DIST_README.md](DIST_README.md) for what changed in this fork and
+[CHANGELOG.md](CHANGELOG.md) for the release history. It renders SVGs using
 [LunaSVG](https://github.com/sammycage/lunasvg) (MIT license) and its
 bundled [PlutoVG](https://github.com/sammycage/plutovg) rasterizer (MIT
 license, includes FreeType-derived rasterizer/stroker code under the

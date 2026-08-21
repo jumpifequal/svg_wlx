@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "bmp_from_svg.h"
+#include "resource.h"
 
 #include <windowsx.h>
 
@@ -11,9 +12,6 @@
 static const COLORREF BG_COLOR = RGB(0xff, 0xff, 0xff);
 extern "C" int _fltused = 0;
 static ATOM wnd_class = 0;
-static HCURSOR open_hand_cursor_handle = nullptr;
-static HCURSOR closed_hand_cursor_handle = nullptr;
-
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -32,102 +30,29 @@ BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
         {
             UnregisterClass(MAKEINTRESOURCE(wnd_class), hinst());
         }
-        if (open_hand_cursor_handle)
-        {
-            DestroyCursor(open_hand_cursor_handle);
-        }
-        if (closed_hand_cursor_handle)
-        {
-            DestroyCursor(closed_hand_cursor_handle);
-        }
     }
     return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Win32 has no built-in "closed fist" cursor constant (IDC_HAND is an open,
-// pointing hand). Draw a small open-hand/closed-fist pair with GDI, the same
-// technique as the toolbar icons, so the drag-to-pan affordance matches the
-// typical open-hover/closed-drag convention without adding a resource file.
-static HCURSOR create_hand_cursor(bool closed)
+// Win32 has no public IDC_CLOSEDHAND constant, and there is no documented
+// way to get one from the system - even wxWidgets, a mature cross-platform
+// GUI library, only implements a distinct open/closed hand pair on macOS and
+// falls back to the same open-hand cursor on Windows (see wxWidgets issue
+// #10360, src/msw/cursor.cpp). So both hand cursors are bundled as real
+// plugin resources (src/res/{open,closed}_hand.cur, declared in
+// svg_wlx.rc) rather than relying on an undocumented system resource ID.
+static HCURSOR closed_hand_cursor()
 {
-    const int size = 32;
-    auto screen_dc = GetDC(nullptr);
-    auto color_dc = CreateCompatibleDC(screen_dc);
-    auto color_bmp = CreateCompatibleBitmap(screen_dc, size, size);
-    auto old_color_bmp = SelectObject(color_dc, color_bmp);
-
-    RECT full = { 0, 0, size, size };
-    FillRect(color_dc, &full, HBRUSH(GetStockObject(WHITE_BRUSH)));
-
-    auto pen = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));
-    auto brush = CreateSolidBrush(RGB(0, 0, 0));
-    SelectObject(color_dc, pen);
-    SelectObject(color_dc, brush);
-
-    if (closed)
-    {
-        // Fist: a single rounded blob.
-        RoundRect(color_dc, 8, 11, 25, 27, 8, 8);
-    }
-    else
-    {
-        // Open hand: palm plus four fingers of slightly varying length.
-        Rectangle(color_dc, 9, 16, 24, 27);
-        Rectangle(color_dc, 10, 6, 13, 18);
-        Rectangle(color_dc, 14, 4, 17, 18);
-        Rectangle(color_dc, 18, 5, 21, 18);
-        Rectangle(color_dc, 22, 9, 25, 18);
-    }
-
-    SelectObject(color_dc, old_color_bmp);
-    DeleteObject(pen);
-    DeleteObject(brush);
-
-    // AND mask: BitBlt from a color DC into a monochrome one maps any pixel
-    // equal to the source DC's background color (white, the default) to 1
-    // (transparent); everything else (our black hand shape) becomes 0
-    // (opaque) - a standard technique for turning a plain GDI drawing into a
-    // masked cursor/icon without hand-authoring bitmap planes.
-    auto mask_bmp = CreateBitmap(size, size, 1, 1, nullptr);
-    auto mask_dc = CreateCompatibleDC(screen_dc);
-    auto old_mask_bmp = SelectObject(mask_dc, mask_bmp);
-    BitBlt(mask_dc, 0, 0, size, size, color_dc, 0, 0, SRCCOPY);
-    SelectObject(mask_dc, old_mask_bmp);
-    DeleteDC(mask_dc);
-    DeleteDC(color_dc);
-    ReleaseDC(nullptr, screen_dc);
-
-    ICONINFO ii = {};
-    ii.fIcon = FALSE;
-    ii.xHotspot = size / 2;
-    ii.yHotspot = size / 2;
-    ii.hbmMask = mask_bmp;
-    ii.hbmColor = color_bmp;
-
-    auto cursor = CreateIconIndirect(&ii);
-    DeleteObject(mask_bmp);
-    DeleteObject(color_bmp);
-    return cursor;
+    static HCURSOR cached = LoadCursor(hinst(), MAKEINTRESOURCE(IDC_CLOSED_HAND));
+    return cached;
 }
 
 static HCURSOR open_hand_cursor()
 {
-    if (!open_hand_cursor_handle)
-    {
-        open_hand_cursor_handle = create_hand_cursor(false);
-    }
-    return open_hand_cursor_handle;
-}
-
-static HCURSOR closed_hand_cursor()
-{
-    if (!closed_hand_cursor_handle)
-    {
-        closed_hand_cursor_handle = create_hand_cursor(true);
-    }
-    return closed_hand_cursor_handle;
+    static HCURSOR cached = LoadCursor(hinst(), MAKEINTRESOURCE(IDC_OPEN_HAND));
+    return cached;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -210,6 +135,20 @@ static void render_for_client(SvgCtxt* ctxt, HWND hwnd, bool force = false)
     clamp_pan(ctxt, cx, cy);
 }
 
+// Total Commander's Lister keeps its own "Fit image to window" menu
+// checkbox and F-key accelerator; it never delivers a raw keystroke to us
+// for it (see ListSendCommand's lc_newparams handling below). Instead it
+// expects the plugin to proactively report its fit state via this
+// WM_COMMAND, per the WLX SDK (wm_command.htm, itm_fit). Without this, TC's
+// checkbox silently drifts out of sync with our real zoom (e.g. after a
+// wheel/drag zoom it never finds out we're no longer "fit"), so the first
+// F press just toggles TC's stale checkbox to a state that doesn't set
+// lcp_fittowindow, and the user has to press F twice to see any effect.
+static void notify_fit_state(HWND hwnd, bool fit)
+{
+    PostMessage(GetParent(hwnd), WM_COMMAND, MAKELONG(fit ? 1 : 0, itm_fit), (LPARAM)hwnd);
+}
+
 static void reset_to_fit(SvgCtxt* ctxt, HWND hwnd)
 {
     ctxt->zoom = 1.0f;
@@ -217,6 +156,7 @@ static void reset_to_fit(SvgCtxt* ctxt, HWND hwnd)
     ctxt->pan_y = 0;
     render_for_client(ctxt, hwnd, true);
     InvalidateRect(hwnd, nullptr, false);
+    notify_fit_state(hwnd, true);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -309,13 +249,93 @@ static void draw_toolbar_button(HDC hdc, const RECT& r, ToolbarIcon icon)
     DeleteObject(icon_pen);
 }
 
-static void zoom_step_at_center(SvgCtxt* ctxt, HWND hwnd, int delta)
+// Single place zoom actually changes - the mouse wheel, +/- keys, and the
+// on-screen toolbar buttons all route through this directly (no
+// SendMessage-to-self indirection), so all three input paths behave
+// identically. `anchor` is a point in this window's client space; the SVG
+// content under it stays fixed on screen across the zoom change.
+static void zoom_by(SvgCtxt* ctxt, HWND hwnd, int steps, POINT anchor)
 {
+    if (!ctxt || !ctxt->bitmap || steps == 0)
+    {
+        return;
+    }
+
+    auto new_zoom = ctxt->zoom * powf(ZOOM_STEP, float(steps));
+    if (new_zoom < ZOOM_MIN) new_zoom = ZOOM_MIN;
+    if (new_zoom > ZOOM_MAX) new_zoom = ZOOM_MAX;
+    if (new_zoom == ctxt->zoom)
+    {
+        return;
+    }
+
     RECT rc;
     GetClientRect(hwnd, &rc);
-    POINT center = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
-    ClientToScreen(hwnd, &center);
-    SendMessage(hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, delta), MAKELPARAM(SHORT(center.x), SHORT(center.y)));
+    auto cw = rc.right - rc.left;
+    auto ch = rc.bottom - rc.top;
+    auto dest_x = (cw > ctxt->width) ? (cw - ctxt->width) / 2 : 0;
+    auto dest_y = (ch > ctxt->height) ? (ch - ctxt->height) / 2 : 0;
+
+    auto anchor_x = anchor.x - dest_x;
+    auto anchor_y = anchor.y - dest_y;
+    if (anchor_x < 0) anchor_x = 0;
+    if (anchor_x > ctxt->width) anchor_x = ctxt->width;
+    if (anchor_y < 0) anchor_y = 0;
+    if (anchor_y > ctxt->height) anchor_y = ctxt->height;
+    auto frac_x = float(ctxt->pan_x + anchor_x) / float(ctxt->width);
+    auto frac_y = float(ctxt->pan_y + anchor_y) / float(ctxt->height);
+
+    ctxt->zoom = new_zoom;
+    render_for_client(ctxt, hwnd, true);
+
+    // The letterbox offset can genuinely change between a "fit-to-window"
+    // (centered) state and a "filled" (zoomed past window size) state, so it
+    // must be recomputed against the post-render bitmap size, not reused
+    // from before the zoom change.
+    auto dest_x2 = (cw > ctxt->width) ? (cw - ctxt->width) / 2 : 0;
+    auto dest_y2 = (ch > ctxt->height) ? (ch - ctxt->height) / 2 : 0;
+
+    ctxt->pan_x = LONG(frac_x * ctxt->width) - (anchor.x - dest_x2);
+    ctxt->pan_y = LONG(frac_y * ctxt->height) - (anchor.y - dest_y2);
+    clamp_pan(ctxt, ctxt->client_cx, ctxt->client_cy);
+
+    InvalidateRect(hwnd, nullptr, false);
+    notify_fit_state(hwnd, false);
+}
+
+// Shared by WM_LBUTTONDOWN and WM_LBUTTONDBLCLK: our window class has
+// CS_DBLCLKS, so two quick clicks on the same toolbar button (e.g. mashing
+// zoom+) arrive as WM_LBUTTONDOWN followed by WM_LBUTTONDBLCLK rather than
+// two WM_LBUTTONDOWNs. Both must hit-test the toolbar the same way, or a
+// double-click lands as a full reset-to-fit and zoom appears to "bounce"
+// back to 1.0 instead of continuing to zoom in/out. Returns true if the
+// point was over a toolbar button (and the corresponding action was taken).
+static bool try_toolbar_click(SvgCtxt* ctxt, HWND hwnd, POINT pt)
+{
+    RECT r_in, r_out, r_fit;
+    get_toolbar_rects(hwnd, r_in, r_out, r_fit);
+    if (PtInRect(&r_in, pt))
+    {
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        POINT center = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
+        zoom_by(ctxt, hwnd, 1, center);
+        return true;
+    }
+    if (PtInRect(&r_out, pt))
+    {
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        POINT center = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
+        zoom_by(ctxt, hwnd, -1, center);
+        return true;
+    }
+    if (PtInRect(&r_fit, pt))
+    {
+        reset_to_fit(ctxt, hwnd);
+        return true;
+    }
+    return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -427,38 +447,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             auto steps = ctxt->wheel_accum / WHEEL_DELTA;
             ctxt->wheel_accum %= WHEEL_DELTA;
 
-            auto new_zoom = ctxt->zoom * powf(ZOOM_STEP, float(steps));
-            if (new_zoom < ZOOM_MIN) new_zoom = ZOOM_MIN;
-            if (new_zoom > ZOOM_MAX) new_zoom = ZOOM_MAX;
-            if (new_zoom != ctxt->zoom)
-            {
-                GetClientRect(hwnd, &rc);
-                auto cw = rc.right - rc.left;
-                auto ch = rc.bottom - rc.top;
-                auto dest_x = (cw > ctxt->width) ? (cw - ctxt->width) / 2 : 0;
-                auto dest_y = (ch > ctxt->height) ? (ch - ctxt->height) / 2 : 0;
-
-                // Point under the cursor, as a fraction of the (pre-zoom)
-                // rendered bitmap, so we can re-anchor pan to keep the same
-                // point under the cursor after re-rendering at the new zoom.
-                auto cursor_x = pt.x - dest_x;
-                auto cursor_y = pt.y - dest_y;
-                if (cursor_x < 0) cursor_x = 0;
-                if (cursor_x > ctxt->width) cursor_x = ctxt->width;
-                if (cursor_y < 0) cursor_y = 0;
-                if (cursor_y > ctxt->height) cursor_y = ctxt->height;
-                auto frac_x = float(ctxt->pan_x + cursor_x) / float(ctxt->width);
-                auto frac_y = float(ctxt->pan_y + cursor_y) / float(ctxt->height);
-
-                ctxt->zoom = new_zoom;
-                render_for_client(ctxt, hwnd, true);
-
-                ctxt->pan_x = LONG(frac_x * ctxt->width) - cursor_x;
-                ctxt->pan_y = LONG(frac_y * ctxt->height) - cursor_y;
-                clamp_pan(ctxt, ctxt->client_cx, ctxt->client_cy);
-
-                InvalidateRect(hwnd, nullptr, false);
-            }
+            zoom_by(ctxt, hwnd, steps, pt);
         }
         return 0;
 
@@ -466,21 +455,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (ctxt && ctxt->bitmap)
         {
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-            RECT r_in, r_out, r_fit;
-            get_toolbar_rects(hwnd, r_in, r_out, r_fit);
-            if (PtInRect(&r_in, pt))
+            if (try_toolbar_click(ctxt, hwnd, pt))
             {
-                zoom_step_at_center(ctxt, hwnd, WHEEL_DELTA);
-                return 0;
-            }
-            if (PtInRect(&r_out, pt))
-            {
-                zoom_step_at_center(ctxt, hwnd, -WHEEL_DELTA);
-                return 0;
-            }
-            if (PtInRect(&r_fit, pt))
-            {
-                reset_to_fit(ctxt, hwnd);
                 return 0;
             }
 
@@ -523,7 +499,11 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONDBLCLK:
         if (ctxt && ctxt->bitmap)
         {
-            reset_to_fit(ctxt, hwnd);
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            if (!try_toolbar_click(ctxt, hwnd, pt))
+            {
+                reset_to_fit(ctxt, hwnd);
+            }
         }
         return 0;
 
@@ -536,18 +516,19 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (ctxt
             && (wp == VK_OEM_PLUS || wp == VK_ADD || wp == VK_OEM_MINUS || wp == VK_SUBTRACT))
         {
-            POINT pt = ctxt->last_mouse;
-            ClientToScreen(hwnd, &pt);
-            auto delta = (wp == VK_OEM_PLUS || wp == VK_ADD) ? WHEEL_DELTA : -WHEEL_DELTA;
-            SendMessage(
-                hwnd,
-                WM_MOUSEWHEEL,
-                MAKEWPARAM(0, delta),
-                MAKELPARAM(SHORT(pt.x), SHORT(pt.y))
-                );
+            auto steps = (wp == VK_OEM_PLUS || wp == VK_ADD) ? 1 : -1;
+            zoom_by(ctxt, hwnd, steps, ctxt->last_mouse);
             return 0;
         }
         break;
+
+    case WM_GETDLGCODE:
+        // Total Commander's Lister frame runs its own dialog-style message
+        // loop; without this, WM_KEYDOWN for F/+/-/arrows never reaches this
+        // window at all - the frame consumes them as dialog navigation before
+        // wnd_proc ever sees them. GPXLister.cpp (a sibling WLX plugin,
+        // read-only reference) does the same.
+        return DLGC_WANTALLKEYS | DLGC_WANTCHARS;
 
     case WM_DESTROY:
         if (ctxt)
@@ -654,6 +635,12 @@ PLUGIN_API HWND WINAPI ListLoadW(HWND parent, PCWSTR fname, int)
             reinterpret_cast<LONG_PTR>(ctxt)
             );
         render_for_client(ctxt, hwnd, true);
+        // Without this, the window can sit unfocused until the user clicks
+        // it, and WM_GETDLGCODE alone does not help until focus is actually
+        // here - matches the pattern used by GPXLister.cpp (a sibling WLX
+        // plugin, read-only reference), which sets focus right after create.
+        SetFocus(hwnd);
+        notify_fit_state(hwnd, true);
     }
     else
     {
@@ -705,6 +692,7 @@ PLUGIN_API int WINAPI ListLoadNextW(HWND, HWND svg_wnd, PCWSTR fname, int)
     ctxt->pan_y = 0;
     render_for_client(ctxt, svg_wnd, true);
     InvalidateRect(svg_wnd, nullptr, true);
+    notify_fit_state(svg_wnd, true);
     return ctxt->bitmap ? LISTPLUGIN_OK : LISTPLUGIN_ERROR;
 }
 
@@ -730,8 +718,23 @@ PLUGIN_API int WINAPI ListLoadNext(HWND parent, HWND svg_wnd, PSTR fname, int fl
 
 ////////////////////////////////////////////////////////////////////////////////
 
-PLUGIN_API int WINAPI ListSendCommand(HWND, int, int)
+PLUGIN_API int WINAPI ListSendCommand(HWND ListWin, int Command, int Parameter)
 {
+    // Total Commander's own Lister frame owns the F key / "Fit image to
+    // window" menu checkbox for image viewers - it is never delivered to us
+    // as a raw WM_KEYDOWN. Instead Lister toggles its own menu state and
+    // tells the plugin via lc_newparams/lcp_fittowindow here (see the WLX
+    // SDK's listsendcommand.htm). Our own WM_KEYDOWN 'F' handler in wnd_proc
+    // only fires in hosts that don't intercept the key this way (e.g. the
+    // test_host harness), so both paths must call the same fit logic.
+    if (Command == lc_newparams)
+    {
+        auto* ctxt = get_ctxt(ListWin);
+        if (ctxt && (Parameter & lcp_fittowindow))
+        {
+            reset_to_fit(ctxt, ListWin);
+        }
+    }
     return LISTPLUGIN_OK;
 }
 

@@ -147,10 +147,18 @@
     <ClInclude Include="src\bmp_from_svg.h" />
     <ClInclude Include="src\listplug.h" />
     <ClInclude Include="src\pch.h" />
+    <ClInclude Include="src\resource.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\bmp_from_svg.cpp" />
     <ClCompile Include="src\svg_wlx.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="src\svg_wlx.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="src\res\closed_hand.cur" />
+    <Image Include="src\res\open_hand.cur" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="third_party\lunasvg\include\lunasvg.h" />
