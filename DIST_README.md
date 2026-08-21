@@ -23,11 +23,9 @@ Contents of this package
 | `LICENSE`                     | svg_wlx license (MIT)                             |
 | `THIRD_PARTY_NOTICES.md`      | Licenses of statically-linked third-party code    |
 
-No `.ini` file is included, and none is needed: this plugin has no
-user-configurable settings. Total Commander does not even call the
-optional `ListSetDefaultParams` export here, and there is no code anywhere
-in the plugin that reads an `.ini` file. Rendering behavior (scale-to-fit,
-white letterbox background, 96 DPI) is fixed.
+No `.ini` file is used — nothing in the plugin reads one. If a diagram's
+text is too small to read at the current window size, use the built-in
+zoom (mouse wheel or +/-, drag to pan) instead; see "Zoom and pan" below.
 
 
 Installation
@@ -46,6 +44,23 @@ pointing at the appropriate binary for your Total Commander bitness.
 No other files or runtime dependencies are required — both binaries are
 fully self-contained (statically linked; verified with `dumpbin
 /DEPENDENTS` to depend only on `KERNEL32.dll`, `USER32.dll`, `GDI32.dll`).
+
+
+Zoom and pan
+------------
+
+- **Mouse wheel** or **+ / -** zooms in/out, centered on the mouse
+  cursor (or, for the keyboard shortcut, on the last known cursor
+  position). Range is 10%-800% of fit-to-window.
+- **Left-click and drag** pans around the image once it's zoomed in
+  beyond the window size.
+- **On-screen buttons** (top-right corner: zoom in, zoom out, fit) give
+  the same controls without a keyboard or wheel.
+- **F key** or **double-click** resets zoom/pan to fit-to-window.
+- The mouse cursor becomes an **open hand** while hovering over a
+  zoomed-in image (signaling it can be dragged) and a **closed hand**
+  while actively dragging it — the typical pan-cursor convention.
+- Zoom and pan also reset to fit-to-window whenever a new file is loaded.
 
 
 What's changed in this fork
@@ -112,6 +127,24 @@ Two more fixes worth calling out from this fork's rewrite:
   re-rasterize at the new size instead of stretching the old raster - the
   plugin now re-renders on `WM_SIZE`, so it is effectively resolution-
   independent at any DPI scale factor.
+
+**New: interactive zoom and pan** (mouse wheel/+-/drag) — see "Zoom and
+pan" above. Not present in the original upstream project. Renders always
+stay crisp at any zoom level, since zooming re-rasterizes the vector SVG
+at the new size rather than stretching a fixed bitmap.
+
+**Hardening from an internal security review of the plugin's own code**
+(the vendored LunaSVG/PlutoVG rendering library itself was explicitly out
+of scope — its handling of malformed SVG content is its own responsibility):
+a possible out-of-bounds write on a degenerate host-supplied buffer length
+in `ListGetDetectString`; a file-size/actual-bytes-read mismatch in the
+file-loading path that could let a file truncated mid-read be parsed with
+uninitialized trailing bytes; a missing upper bound on rendered bitmap
+dimensions that could let an extreme zoom level on a large SVG drive
+memory allocation into the multi-gigabyte range; and a memory leak on two
+rare window-creation failure paths. None of these had a demonstrated
+real-world trigger during normal use — they were found and fixed
+proactively.
 
 Build-wise, the plugin also moved from a Python/SCons build script
 (`bld.py`, which depended on a private build-helper module not published

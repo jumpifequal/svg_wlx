@@ -1,6 +1,9 @@
 #include "pch.h"
 #include "bmp_from_svg.h"
 
+#include <windowsx.h>
+
+#include <cmath>
 #include <wchar.h>
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -8,6 +11,8 @@
 static const COLORREF BG_COLOR = RGB(0xff, 0xff, 0xff);
 extern "C" int _fltused = 0;
 static ATOM wnd_class = 0;
+static HCURSOR open_hand_cursor_handle = nullptr;
+static HCURSOR closed_hand_cursor_handle = nullptr;
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -21,22 +26,133 @@ inline HINSTANCE hinst()
 
 BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
 {
-    if (reason == DLL_PROCESS_DETACH && wnd_class)
+    if (reason == DLL_PROCESS_DETACH)
     {
-        UnregisterClass(MAKEINTRESOURCE(wnd_class), hinst());
+        if (wnd_class)
+        {
+            UnregisterClass(MAKEINTRESOURCE(wnd_class), hinst());
+        }
+        if (open_hand_cursor_handle)
+        {
+            DestroyCursor(open_hand_cursor_handle);
+        }
+        if (closed_hand_cursor_handle)
+        {
+            DestroyCursor(closed_hand_cursor_handle);
+        }
     }
     return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Win32 has no built-in "closed fist" cursor constant (IDC_HAND is an open,
+// pointing hand). Draw a small open-hand/closed-fist pair with GDI, the same
+// technique as the toolbar icons, so the drag-to-pan affordance matches the
+// typical open-hover/closed-drag convention without adding a resource file.
+static HCURSOR create_hand_cursor(bool closed)
+{
+    const int size = 32;
+    auto screen_dc = GetDC(nullptr);
+    auto color_dc = CreateCompatibleDC(screen_dc);
+    auto color_bmp = CreateCompatibleBitmap(screen_dc, size, size);
+    auto old_color_bmp = SelectObject(color_dc, color_bmp);
+
+    RECT full = { 0, 0, size, size };
+    FillRect(color_dc, &full, HBRUSH(GetStockObject(WHITE_BRUSH)));
+
+    auto pen = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));
+    auto brush = CreateSolidBrush(RGB(0, 0, 0));
+    SelectObject(color_dc, pen);
+    SelectObject(color_dc, brush);
+
+    if (closed)
+    {
+        // Fist: a single rounded blob.
+        RoundRect(color_dc, 8, 11, 25, 27, 8, 8);
+    }
+    else
+    {
+        // Open hand: palm plus four fingers of slightly varying length.
+        Rectangle(color_dc, 9, 16, 24, 27);
+        Rectangle(color_dc, 10, 6, 13, 18);
+        Rectangle(color_dc, 14, 4, 17, 18);
+        Rectangle(color_dc, 18, 5, 21, 18);
+        Rectangle(color_dc, 22, 9, 25, 18);
+    }
+
+    SelectObject(color_dc, old_color_bmp);
+    DeleteObject(pen);
+    DeleteObject(brush);
+
+    // AND mask: BitBlt from a color DC into a monochrome one maps any pixel
+    // equal to the source DC's background color (white, the default) to 1
+    // (transparent); everything else (our black hand shape) becomes 0
+    // (opaque) - a standard technique for turning a plain GDI drawing into a
+    // masked cursor/icon without hand-authoring bitmap planes.
+    auto mask_bmp = CreateBitmap(size, size, 1, 1, nullptr);
+    auto mask_dc = CreateCompatibleDC(screen_dc);
+    auto old_mask_bmp = SelectObject(mask_dc, mask_bmp);
+    BitBlt(mask_dc, 0, 0, size, size, color_dc, 0, 0, SRCCOPY);
+    SelectObject(mask_dc, old_mask_bmp);
+    DeleteDC(mask_dc);
+    DeleteDC(color_dc);
+    ReleaseDC(nullptr, screen_dc);
+
+    ICONINFO ii = {};
+    ii.fIcon = FALSE;
+    ii.xHotspot = size / 2;
+    ii.yHotspot = size / 2;
+    ii.hbmMask = mask_bmp;
+    ii.hbmColor = color_bmp;
+
+    auto cursor = CreateIconIndirect(&ii);
+    DeleteObject(mask_bmp);
+    DeleteObject(color_bmp);
+    return cursor;
+}
+
+static HCURSOR open_hand_cursor()
+{
+    if (!open_hand_cursor_handle)
+    {
+        open_hand_cursor_handle = create_hand_cursor(false);
+    }
+    return open_hand_cursor_handle;
+}
+
+static HCURSOR closed_hand_cursor()
+{
+    if (!closed_hand_cursor_handle)
+    {
+        closed_hand_cursor_handle = create_hand_cursor(true);
+    }
+    return closed_hand_cursor_handle;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+static const float ZOOM_MIN  = 0.1f;
+static const float ZOOM_MAX  = 8.0f;
+static const float ZOOM_STEP = 1.1f;  // multiplier per wheel notch / +- press
+
 struct SvgCtxt
 {
     HBITMAP bitmap;
-    LONG    width;      // rendered bitmap size
+    LONG    width;         // rendered bitmap size (at current zoom)
     LONG    height;
-    LONG    client_cx;  // client size the bitmap was rendered for
+    LONG    client_cx;     // client size the bitmap was rendered for
     LONG    client_cy;
+    float   zoom;          // 1.0 = fit-to-window
+    LONG    pan_x;         // top-left of the visible viewport into the
+    LONG    pan_y;         // (possibly larger-than-window) zoomed bitmap
+    int     wheel_accum;   // sub-notch WM_MOUSEWHEEL delta accumulator
+    bool    panning;       // true while dragging with the left button held
+    POINT   pan_anchor;    // client-space point where the current drag started
+    LONG    pan_anchor_x;  // pan_x/pan_y at the start of the current drag
+    LONG    pan_anchor_y;
+    POINT   last_mouse;    // last known client-space mouse position, used as
+                            // the zoom anchor for +/- keyboard zooming
     WCHAR   fname[MAX_PATH];
 };
 
@@ -45,12 +161,22 @@ inline SvgCtxt* get_ctxt(HWND hwnd)
     return reinterpret_cast<SvgCtxt*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
 }
 
-// Re-rasterizes at the window's current client size if it changed since the
-// last render. Vector re-render (rather than stretching the old bitmap) is
-// what keeps the image crisp across plain resizes and DPI-driven resizes
-// alike, since a WS_CHILD window has no DPI awareness of its own - it just
-// gets resized by its DPI-aware host (Total Commander) and receives WM_SIZE.
-static void render_for_client(SvgCtxt* ctxt, HWND hwnd)
+static void clamp_pan(SvgCtxt* ctxt, LONG cx, LONG cy)
+{
+    auto max_x = (ctxt->width > cx) ? (ctxt->width - cx) : 0;
+    auto max_y = (ctxt->height > cy) ? (ctxt->height - cy) : 0;
+    if (ctxt->pan_x < 0) ctxt->pan_x = 0;
+    if (ctxt->pan_y < 0) ctxt->pan_y = 0;
+    if (ctxt->pan_x > max_x) ctxt->pan_x = max_x;
+    if (ctxt->pan_y > max_y) ctxt->pan_y = max_y;
+}
+
+// Re-rasterizes at (client size * zoom) unless that exact size was already
+// rendered. Vector re-render (rather than stretching the old bitmap) is what
+// keeps the image crisp across resizes, DPI changes, and zoom changes alike -
+// zooming in just asks the renderer for a bigger bitmap, and WM_PAINT blits
+// only the currently-panned-to sub-rectangle of it.
+static void render_for_client(SvgCtxt* ctxt, HWND hwnd, bool force = false)
 {
     RECT rc;
     GetClientRect(hwnd, &rc);
@@ -60,7 +186,10 @@ static void render_for_client(SvgCtxt* ctxt, HWND hwnd)
     {
         return;
     }
-    if (ctxt->bitmap && cx == ctxt->client_cx && cy == ctxt->client_cy)
+    auto target_w = LONG(cx * ctxt->zoom + 0.5f);
+    auto target_h = LONG(cy * ctxt->zoom + 0.5f);
+    if (!force && ctxt->bitmap && cx == ctxt->client_cx && cy == ctxt->client_cy
+        && target_w == ctxt->width && target_h == ctxt->height)
     {
         return;
     }
@@ -70,15 +199,126 @@ static void render_for_client(SvgCtxt* ctxt, HWND hwnd)
     }
     ctxt->bitmap = bitmap_from_svg(
         ctxt->fname,
-        cx,
-        cy,
+        target_w,
+        target_h,
         BG_COLOR,
         ctxt->width,
         ctxt->height
         );
     ctxt->client_cx = cx;
     ctxt->client_cy = cy;
+    clamp_pan(ctxt, cx, cy);
 }
+
+static void reset_to_fit(SvgCtxt* ctxt, HWND hwnd)
+{
+    ctxt->zoom = 1.0f;
+    ctxt->pan_x = 0;
+    ctxt->pan_y = 0;
+    render_for_client(ctxt, hwnd, true);
+    InvalidateRect(hwnd, nullptr, false);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Small always-visible on-screen zoom toolbar (zoom in / zoom out / fit),
+// top-right corner, for mouse-only use alongside the wheel/keyboard/drag
+// controls.
+static const LONG TOOLBAR_BTN_SIZE   = 28;
+static const LONG TOOLBAR_BTN_GAP    = 4;
+static const LONG TOOLBAR_BTN_MARGIN = 8;
+
+static void get_toolbar_rects(HWND hwnd, RECT& r_zoom_in, RECT& r_zoom_out, RECT& r_fit)
+{
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+
+    r_fit.top = TOOLBAR_BTN_MARGIN;
+    r_fit.bottom = TOOLBAR_BTN_MARGIN + TOOLBAR_BTN_SIZE;
+    r_fit.right = rc.right - TOOLBAR_BTN_MARGIN;
+    r_fit.left = r_fit.right - TOOLBAR_BTN_SIZE;
+
+    r_zoom_out.top = r_fit.top;
+    r_zoom_out.bottom = r_fit.bottom;
+    r_zoom_out.right = r_fit.left - TOOLBAR_BTN_GAP;
+    r_zoom_out.left = r_zoom_out.right - TOOLBAR_BTN_SIZE;
+
+    r_zoom_in.top = r_fit.top;
+    r_zoom_in.bottom = r_fit.bottom;
+    r_zoom_in.right = r_zoom_out.left - TOOLBAR_BTN_GAP;
+    r_zoom_in.left = r_zoom_in.right - TOOLBAR_BTN_SIZE;
+}
+
+enum ToolbarIcon { ICON_ZOOM_IN, ICON_ZOOM_OUT, ICON_FIT };
+
+static void draw_toolbar_button(HDC hdc, const RECT& r, ToolbarIcon icon)
+{
+    auto bg = CreateSolidBrush(RGB(0xf0, 0xf0, 0xf0));
+    auto border = CreatePen(PS_SOLID, 1, RGB(0xa0, 0xa0, 0xa0));
+    auto old_brush = SelectObject(hdc, bg);
+    auto old_pen = SelectObject(hdc, border);
+    Rectangle(hdc, r.left, r.top, r.right, r.bottom);
+
+    SelectObject(hdc, GetStockObject(NULL_BRUSH));
+    auto icon_pen = CreatePen(PS_SOLID, 2, RGB(0x40, 0x40, 0x40));
+    SelectObject(hdc, icon_pen);
+
+    if (icon == ICON_FIT)
+    {
+        // Four corner brackets, suggesting "fit to window".
+        const LONG len = 6, off = 6;
+        MoveToEx(hdc, r.left + off, r.top + off + len, nullptr);
+        LineTo(hdc, r.left + off, r.top + off);
+        LineTo(hdc, r.left + off + len, r.top + off);
+
+        MoveToEx(hdc, r.right - off - len, r.top + off, nullptr);
+        LineTo(hdc, r.right - off, r.top + off);
+        LineTo(hdc, r.right - off, r.top + off + len);
+
+        MoveToEx(hdc, r.left + off, r.bottom - off - len, nullptr);
+        LineTo(hdc, r.left + off, r.bottom - off);
+        LineTo(hdc, r.left + off + len, r.bottom - off);
+
+        MoveToEx(hdc, r.right - off - len, r.bottom - off, nullptr);
+        LineTo(hdc, r.right - off, r.bottom - off);
+        LineTo(hdc, r.right - off, r.bottom - off - len);
+    }
+    else
+    {
+        // Magnifying glass (circle + handle) with a +/- inside the lens.
+        const LONG radius = 6;
+        auto lens_cx = (r.left + r.right) / 2 - 2;
+        auto lens_cy = (r.top + r.bottom) / 2 - 2;
+        Ellipse(hdc, lens_cx - radius, lens_cy - radius, lens_cx + radius, lens_cy + radius);
+        MoveToEx(hdc, lens_cx + radius - 1, lens_cy + radius - 1, nullptr);
+        LineTo(hdc, lens_cx + radius + 6, lens_cy + radius + 6);
+
+        MoveToEx(hdc, lens_cx - 3, lens_cy, nullptr);
+        LineTo(hdc, lens_cx + 3, lens_cy);
+        if (icon == ICON_ZOOM_IN)
+        {
+            MoveToEx(hdc, lens_cx, lens_cy - 3, nullptr);
+            LineTo(hdc, lens_cx, lens_cy + 3);
+        }
+    }
+
+    SelectObject(hdc, old_brush);
+    SelectObject(hdc, old_pen);
+    DeleteObject(bg);
+    DeleteObject(border);
+    DeleteObject(icon_pen);
+}
+
+static void zoom_step_at_center(SvgCtxt* ctxt, HWND hwnd, int delta)
+{
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    POINT center = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
+    ClientToScreen(hwnd, &center);
+    SendMessage(hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, delta), MAKELPARAM(SHORT(center.x), SHORT(center.y)));
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -99,51 +339,35 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             HDC memDC = CreateCompatibleDC(hdc);
             HGDIOBJ oldBmp = SelectObject(memDC, ctxt->bitmap);
 
-            auto wwidth = rc.right - rc.left;
-            auto wheight = rc.bottom - rc.top;
-            LONG dx, dy, stretched_w, stretched_h;
-            if (wwidth >= ctxt->width && wheight >= ctxt->height)
-            {
-                // center image
-                dx = (rc.right - ctxt->width) / 2;
-                dy = (rc.bottom - ctxt->height) / 2;
-                stretched_w = ctxt->width;
-                stretched_h = ctxt->height;
-            }
-            else
-            {
-                auto scaleX = float(wwidth) / ctxt->width;
-                auto scaleY = float(wheight) / ctxt->height;
-                if (scaleX < scaleY)
-                {
-                    stretched_w = LONG(ctxt->width * scaleX + 0.5f);
-                    stretched_h = LONG(ctxt->height * scaleX + 0.5f);
-                    dx = rc.left;
-                    dy = (rc.bottom - stretched_h) / 2;
-                }
-                else
-                {
-                    stretched_w = LONG(ctxt->width * scaleY + 0.5f);
-                    stretched_h = LONG(ctxt->height * scaleY + 0.5f);
-                    dx = (rc.right - stretched_w) / 2;
-                    dy = rc.top;
-                }
-            }
-            StretchBlt(
+            // Already rendered at the exact size we want to show (see
+            // render_for_client) - just crop-blit the currently panned-to
+            // sub-rectangle, 1:1, no GDI stretching needed.
+            auto cw = rc.right - rc.left;
+            auto ch = rc.bottom - rc.top;
+            auto visible_w = (ctxt->width < cw) ? ctxt->width : cw;
+            auto visible_h = (ctxt->height < ch) ? ctxt->height : ch;
+            auto dest_x = (cw > ctxt->width) ? (cw - ctxt->width) / 2 : 0;
+            auto dest_y = (ch > ctxt->height) ? (ch - ctxt->height) / 2 : 0;
+
+            BitBlt(
                 hdc,
-                dx,
-                dy,
-                stretched_w,
-                stretched_h,
+                dest_x,
+                dest_y,
+                visible_w,
+                visible_h,
                 memDC,
-                0,
-                0,
-                ctxt->width,
-                ctxt->height,
+                ctxt->pan_x,
+                ctxt->pan_y,
                 SRCCOPY
                 );
             SelectObject(memDC, oldBmp);
             DeleteDC(memDC);
+
+            RECT r_in, r_out, r_fit;
+            get_toolbar_rects(hwnd, r_in, r_out, r_fit);
+            draw_toolbar_button(hdc, r_in, ICON_ZOOM_IN);
+            draw_toolbar_button(hdc, r_out, ICON_ZOOM_OUT);
+            draw_toolbar_button(hdc, r_fit, ICON_FIT);
         }
         else
         {
@@ -161,12 +385,169 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_ERASEBKGND:
         return 1;  // handled in WM_PAINT
 
+    case WM_SETCURSOR:
+        if (ctxt && LOWORD(lp) == HTCLIENT)
+        {
+            if (ctxt->panning)
+            {
+                SetCursor(closed_hand_cursor());
+            }
+            else if (ctxt->bitmap
+                && (ctxt->width > ctxt->client_cx || ctxt->height > ctxt->client_cy))
+            {
+                SetCursor(open_hand_cursor());
+            }
+            else
+            {
+                SetCursor(LoadCursor(nullptr, IDC_ARROW));
+            }
+            return TRUE;
+        }
+        break;
+
     case WM_SIZE:
         if (ctxt)
         {
             render_for_client(ctxt, hwnd);
+            InvalidateRect(hwnd, nullptr, false);
         }
         return 0;
+
+    case WM_MOUSEWHEEL:
+        if (ctxt && ctxt->bitmap)
+        {
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ScreenToClient(hwnd, &pt);  // WM_MOUSEWHEEL coords are in screen space
+
+            ctxt->wheel_accum += GET_WHEEL_DELTA_WPARAM(wp);
+            if (abs(ctxt->wheel_accum) < WHEEL_DELTA)
+            {
+                return 0;
+            }
+            auto steps = ctxt->wheel_accum / WHEEL_DELTA;
+            ctxt->wheel_accum %= WHEEL_DELTA;
+
+            auto new_zoom = ctxt->zoom * powf(ZOOM_STEP, float(steps));
+            if (new_zoom < ZOOM_MIN) new_zoom = ZOOM_MIN;
+            if (new_zoom > ZOOM_MAX) new_zoom = ZOOM_MAX;
+            if (new_zoom != ctxt->zoom)
+            {
+                GetClientRect(hwnd, &rc);
+                auto cw = rc.right - rc.left;
+                auto ch = rc.bottom - rc.top;
+                auto dest_x = (cw > ctxt->width) ? (cw - ctxt->width) / 2 : 0;
+                auto dest_y = (ch > ctxt->height) ? (ch - ctxt->height) / 2 : 0;
+
+                // Point under the cursor, as a fraction of the (pre-zoom)
+                // rendered bitmap, so we can re-anchor pan to keep the same
+                // point under the cursor after re-rendering at the new zoom.
+                auto cursor_x = pt.x - dest_x;
+                auto cursor_y = pt.y - dest_y;
+                if (cursor_x < 0) cursor_x = 0;
+                if (cursor_x > ctxt->width) cursor_x = ctxt->width;
+                if (cursor_y < 0) cursor_y = 0;
+                if (cursor_y > ctxt->height) cursor_y = ctxt->height;
+                auto frac_x = float(ctxt->pan_x + cursor_x) / float(ctxt->width);
+                auto frac_y = float(ctxt->pan_y + cursor_y) / float(ctxt->height);
+
+                ctxt->zoom = new_zoom;
+                render_for_client(ctxt, hwnd, true);
+
+                ctxt->pan_x = LONG(frac_x * ctxt->width) - cursor_x;
+                ctxt->pan_y = LONG(frac_y * ctxt->height) - cursor_y;
+                clamp_pan(ctxt, ctxt->client_cx, ctxt->client_cy);
+
+                InvalidateRect(hwnd, nullptr, false);
+            }
+        }
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        if (ctxt && ctxt->bitmap)
+        {
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            RECT r_in, r_out, r_fit;
+            get_toolbar_rects(hwnd, r_in, r_out, r_fit);
+            if (PtInRect(&r_in, pt))
+            {
+                zoom_step_at_center(ctxt, hwnd, WHEEL_DELTA);
+                return 0;
+            }
+            if (PtInRect(&r_out, pt))
+            {
+                zoom_step_at_center(ctxt, hwnd, -WHEEL_DELTA);
+                return 0;
+            }
+            if (PtInRect(&r_fit, pt))
+            {
+                reset_to_fit(ctxt, hwnd);
+                return 0;
+            }
+
+            SetFocus(hwnd);
+            ctxt->panning = true;
+            ctxt->pan_anchor.x = GET_X_LPARAM(lp);
+            ctxt->pan_anchor.y = GET_Y_LPARAM(lp);
+            ctxt->pan_anchor_x = ctxt->pan_x;
+            ctxt->pan_anchor_y = ctxt->pan_y;
+            SetCapture(hwnd);
+        }
+        return 0;
+
+    case WM_MOUSEMOVE:
+        if (ctxt)
+        {
+            ctxt->last_mouse.x = GET_X_LPARAM(lp);
+            ctxt->last_mouse.y = GET_Y_LPARAM(lp);
+            if (ctxt->panning)
+            {
+                GetClientRect(hwnd, &rc);
+                auto dx = ctxt->last_mouse.x - ctxt->pan_anchor.x;
+                auto dy = ctxt->last_mouse.y - ctxt->pan_anchor.y;
+                ctxt->pan_x = ctxt->pan_anchor_x - dx;
+                ctxt->pan_y = ctxt->pan_anchor_y - dy;
+                clamp_pan(ctxt, rc.right - rc.left, rc.bottom - rc.top);
+                InvalidateRect(hwnd, nullptr, false);
+            }
+        }
+        return 0;
+
+    case WM_LBUTTONUP:
+        if (ctxt && ctxt->panning)
+        {
+            ctxt->panning = false;
+            ReleaseCapture();
+        }
+        return 0;
+
+    case WM_LBUTTONDBLCLK:
+        if (ctxt && ctxt->bitmap)
+        {
+            reset_to_fit(ctxt, hwnd);
+        }
+        return 0;
+
+    case WM_KEYDOWN:
+        if (ctxt && (wp == 'F' || wp == 'f'))
+        {
+            reset_to_fit(ctxt, hwnd);
+            return 0;
+        }
+        if (ctxt
+            && (wp == VK_OEM_PLUS || wp == VK_ADD || wp == VK_OEM_MINUS || wp == VK_SUBTRACT))
+        {
+            POINT pt = ctxt->last_mouse;
+            ClientToScreen(hwnd, &pt);
+            auto delta = (wp == VK_OEM_PLUS || wp == VK_ADD) ? WHEEL_DELTA : -WHEEL_DELTA;
+            SendMessage(
+                hwnd,
+                WM_MOUSEWHEEL,
+                MAKEWPARAM(0, delta),
+                MAKELPARAM(SHORT(pt.x), SHORT(pt.y))
+                );
+            return 0;
+        }
+        break;
 
     case WM_DESTROY:
         if (ctxt)
@@ -187,6 +568,10 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 PLUGIN_API void WINAPI ListGetDetectString(PSTR detect_str, int maxlen)
 {
+    if (maxlen <= 0)
+    {
+        return;
+    }
     static const CHAR ds[] = "EXT=\"SVG\" | EXT=\"SVGZ\"";
     strncpy(detect_str, ds, maxlen - 1);
     detect_str[maxlen - 1] = '\0';
@@ -224,10 +609,11 @@ PLUGIN_API HWND WINAPI ListLoadW(HWND parent, PCWSTR fname, int)
         wc.hCursor        = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground  = HBRUSH(GetStockObject(WHITE_BRUSH));
         wc.lpszClassName  = L"svg_wlx";
-        wc.style          = CS_HREDRAW | CS_VREDRAW;
+        wc.style          = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
         wnd_class = RegisterClass(&wc);
         if (wnd_class == 0)
         {
+            free(ctxt);
             return nullptr;
         }
     }
@@ -254,13 +640,24 @@ PLUGIN_API HWND WINAPI ListLoadW(HWND parent, PCWSTR fname, int)
         ctxt->bitmap = nullptr;
         ctxt->client_cx = 0;
         ctxt->client_cy = 0;
+        ctxt->zoom = 1.0f;
+        ctxt->pan_x = 0;
+        ctxt->pan_y = 0;
+        ctxt->wheel_accum = 0;
+        ctxt->panning = false;
+        ctxt->last_mouse.x = width / 2;
+        ctxt->last_mouse.y = height / 2;
         wcsncpy_s(ctxt->fname, MAX_PATH, fname, _TRUNCATE);
         SetWindowLongPtr(
             hwnd,
             GWLP_USERDATA,
             reinterpret_cast<LONG_PTR>(ctxt)
             );
-        render_for_client(ctxt, hwnd);
+        render_for_client(ctxt, hwnd, true);
+    }
+    else
+    {
+        free(ctxt);
     }
     return hwnd;
 }
@@ -303,8 +700,10 @@ PLUGIN_API int WINAPI ListLoadNextW(HWND, HWND svg_wnd, PCWSTR fname, int)
     }
 
     wcsncpy_s(ctxt->fname, MAX_PATH, fname, _TRUNCATE);
-    ctxt->client_cx = -1;  // force re-render even if client size is unchanged
-    render_for_client(ctxt, svg_wnd);
+    ctxt->zoom = 1.0f;  // new file: reset zoom/pan to fit-to-window
+    ctxt->pan_x = 0;
+    ctxt->pan_y = 0;
+    render_for_client(ctxt, svg_wnd, true);
     InvalidateRect(svg_wnd, nullptr, true);
     return ctxt->bitmap ? LISTPLUGIN_OK : LISTPLUGIN_ERROR;
 }

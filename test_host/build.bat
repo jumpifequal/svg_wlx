@@ -1,6 +1,6 @@
 @echo off
-rem Build test_host.exe from an ordinary command prompt (finds the MSVC
-rem x64 dev environment via vswhere, then compiles).
+rem Build test_host.exe and interactive_host.exe from an ordinary command
+rem prompt (finds the MSVC x64 dev environment via vswhere, then compiles).
 rem
 rem Note: vswhere.exe lives under "Program Files (x86)", and cmd's `for /f`
 rem backquote parser breaks on the literal "(x86)" in that path even when
@@ -12,3 +12,4 @@ set /p VCVARS=<"%VCVARS_TXT%"
 del "%VCVARS_TXT%"
 call "%VCVARS%"
 cl /EHsc /nologo "%~dp0test_host.cpp" gdi32.lib user32.lib /Fe:"%~dp0test_host.exe"
+cl /EHsc /nologo "%~dp0interactive_host.cpp" gdi32.lib user32.lib /Fe:"%~dp0interactive_host.exe"

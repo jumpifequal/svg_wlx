@@ -5,6 +5,14 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Absolute ceiling on the requested render box, independent of zoom level or
+// the SVG's own declared size. Without this, a large/adversarial SVG combined
+// with the zoom feature's up-to-8x multiplier on a maximized window could
+// drive renderToBitmap()/CreateDIBSection() toward multi-gigabyte allocations.
+static const LONG MAX_RENDER_DIMENSION = 8192;
+
+////////////////////////////////////////////////////////////////////////////////
+
 static char* read_file(PCWSTR fname, DWORD& size)
 {
     char* buf = nullptr;
@@ -26,9 +34,14 @@ static char* read_file(PCWSTR fname, DWORD& size)
             buf = static_cast<char*>(malloc(file_size));
             if (buf)
             {
-                if (ReadFile(hdl, buf, file_size, nullptr, nullptr))
+                DWORD bytes_read = 0;
+                // Use the actual bytes transferred, not the pre-read file_size:
+                // if the file is truncated by another process between GetFileSize
+                // and here, trusting file_size would tell the caller (and the SVG
+                // parser) that uninitialized tail bytes of buf are valid content.
+                if (ReadFile(hdl, buf, file_size, &bytes_read, nullptr))
                 {
-                    size = file_size;
+                    size = bytes_read;
                 }
                 else
                 {
@@ -73,6 +86,9 @@ HBITMAP bitmap_from_svg(
     {
         return nullptr;
     }
+
+    if (max_width > MAX_RENDER_DIMENSION) max_width = MAX_RENDER_DIMENSION;
+    if (max_height > MAX_RENDER_DIMENSION) max_height = MAX_RENDER_DIMENSION;
 
     auto scaleX = float(max_width) / doc_width;
     auto scaleY = float(max_height) / doc_height;
@@ -136,61 +152,6 @@ HBITMAP bitmap_from_svg(
         }
     }
     return bmp;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-BOOL save_svg_bitmap(PCWSTR fname, HBITMAP bmp)
-{
-    BITMAP bm;
-    GetObject(bmp, sizeof(bm), &bm);
-    if (bm.bmBits == nullptr)
-    {
-        return false;
-    }
-
-    LONG width  = bm.bmWidth;
-    LONG height = bm.bmHeight;
-    LONG stride = ((width * 3 + 3) & ~3); // DWORD aligned row size
-    LONG imageSize = stride * height;
-
-    BITMAPFILEHEADER fileHeader = {};
-    BITMAPINFOHEADER infoHeader = {};
-
-    infoHeader.biSize        = static_cast<DWORD>(sizeof(BITMAPINFOHEADER));
-    infoHeader.biWidth       = width;
-    infoHeader.biHeight      = -height;
-    infoHeader.biPlanes      = 1;
-    infoHeader.biBitCount    = 24;
-    infoHeader.biCompression = BI_RGB;
-    infoHeader.biSizeImage   = imageSize;
-
-    fileHeader.bfType = 0x4D42; // 'BM'
-    fileHeader.bfOffBits = static_cast<DWORD>(
-        sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)
-        );
-    fileHeader.bfSize = fileHeader.bfOffBits + imageSize;
-
-    HANDLE file = CreateFile(
-        fname,
-        GENERIC_WRITE,
-        0,
-        nullptr,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr
-        );
-    if (file == INVALID_HANDLE_VALUE)
-    {
-        return false;
-    }
-
-    WriteFile(file, &fileHeader, sizeof(fileHeader), nullptr, nullptr);
-    WriteFile(file, &infoHeader, sizeof(infoHeader), nullptr, nullptr);
-    WriteFile(file, bm.bmBits, imageSize, nullptr, nullptr);
-    CloseHandle(file);
-
-    return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

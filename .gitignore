@@ -5,6 +5,9 @@
 test_host/*.exe
 test_host/*.obj
 test_host/*.bmp
+test_host/*.png
+test_host/*.log
 *.user
 *.suo
 .vs/
+.claude/
