@@ -7,4 +7,4 @@ file=svg_wlx.wlx
 defaultdir=svg_wlx
 defaultextension=svg;svgz
 defaultfilter=EXT="SVG" | EXT="SVGZ"
-version=2.1.1
+version=2.1.2

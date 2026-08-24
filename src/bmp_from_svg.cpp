@@ -57,13 +57,129 @@ static char* read_file(PCWSTR fname, DWORD& size)
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Classic image-editor checkerboard: two neutral grays, 8x8 screen-pixel
+// cells anchored at the bitmap's own (0,0) so it re-tiles cleanly at any
+// render size (zoom re-renders the whole bitmap rather than stretching it).
+static const int CHECKER_CELL = 8;
+static const BYTE CHECKER_LIGHT = 0xFF;
+static const BYTE CHECKER_DARK  = 0xC0;
+
+inline BYTE checker_shade(LONG x, LONG y)
+{
+    return (((x / CHECKER_CELL) + (y / CHECKER_CELL)) & 1) ? CHECKER_DARK : CHECKER_LIGHT;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Case-insensitive substring search over a length-bounded, non-null-
+// terminated buffer (the file content as read - not safe to hand to strstr).
+static bool contains_ci(const char* data, DWORD len, const char* needle)
+{
+    auto nlen = strlen(needle);
+    if (nlen == 0 || len < nlen)
+    {
+        return false;
+    }
+    for (DWORD i = 0; i + nlen <= len; i++)
+    {
+        size_t j = 0;
+        for (; j < nlen; j++)
+        {
+            auto a = data[i + j];
+            if (a >= 'A' && a <= 'Z') a = char(a + 32);
+            if (a != needle[j])
+            {
+                break;
+            }
+        }
+        if (j == nlen)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// True if the raw markup uses any SMIL (<animate>/<animateTransform>/
+// <animateMotion>/<animateColor>/<set>) or CSS (@keyframes, animation:/
+// animation-name:) animation construct. LunaSVG has no animation support at
+// all - it silently drops every element/property above rather than erroring
+// on it - so the plugin renders a static first frame either way; this is
+// only used to decide whether to tell the user that's what happened.
+static bool svg_source_has_animation(const char* data, DWORD len)
+{
+    if (contains_ci(data, len, "<animate"))  // covers the whole animate* family
+    {
+        return true;
+    }
+    if (contains_ci(data, len, "@keyframes")
+        || contains_ci(data, len, "animation:")
+        || contains_ci(data, len, "animation-name"))
+    {
+        return true;
+    }
+    // "<set" alone would also match a hypothetical "<settings" tag, so
+    // require a real tag boundary after it.
+    static const char* SET = "<set";
+    auto slen = strlen(SET);
+    for (DWORD i = 0; i + slen <= len; i++)
+    {
+        size_t j = 0;
+        for (; j < slen; j++)
+        {
+            auto a = data[i + j];
+            if (a >= 'A' && a <= 'Z') a = char(a + 32);
+            if (a != SET[j])
+            {
+                break;
+            }
+        }
+        if (j == slen && i + slen < len)
+        {
+            auto next = data[i + slen];
+            if (next == ' ' || next == '\t' || next == '\r' || next == '\n'
+                || next == '>' || next == '/')
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool svg_file_has_animation(PCWSTR fname)
+{
+    DWORD size = 0;
+    auto* buf = read_file(fname, size);
+    if (!buf)
+    {
+        return false;
+    }
+
+    auto* content = buf;
+    auto content_size = size;
+    if (content_size >= 3
+        && BYTE(content[0]) == 0xEF && BYTE(content[1]) == 0xBB && BYTE(content[2]) == 0xBF)
+    {
+        content += 3;
+        content_size -= 3;
+    }
+
+    auto result = svg_source_has_animation(content, content_size);
+    free(buf);
+    return result;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 HBITMAP bitmap_from_svg(
     PCWSTR fname,
     LONG max_width,
     LONG max_height,
     COLORREF back_color,
     LONG& width,
-    LONG& height
+    LONG& height,
+    bool checkerboard
     )
 {
     DWORD size = 0;
@@ -73,7 +189,21 @@ HBITMAP bitmap_from_svg(
         return nullptr;
     }
 
-    auto doc = lunasvg::Document::loadFromData(buf, size);
+    // Skip a leading UTF-8 BOM (EF BB BF) - some SVG exporters emit one, and
+    // LunaSVG's parser expects the very first byte to be '<', so a BOM left
+    // in place makes it reject the entire document (every element, not just
+    // the offending bytes) with no way to tell that from any other parse
+    // failure.
+    auto* content = buf;
+    auto content_size = size;
+    if (content_size >= 3
+        && BYTE(content[0]) == 0xEF && BYTE(content[1]) == 0xBB && BYTE(content[2]) == 0xBF)
+    {
+        content += 3;
+        content_size -= 3;
+    }
+
+    auto doc = lunasvg::Document::loadFromData(content, content_size);
     free(buf);
     if (!doc)
     {
@@ -144,10 +274,19 @@ HBITMAP bitmap_from_svg(
                 auto sb = rgba[sidx + 2];
                 auto sa = rgba[sidx + 3];
 
+                auto bg_r = BG_R;
+                auto bg_g = BG_G;
+                auto bg_b = BG_B;
+                if (checkerboard && sa < 255)
+                {
+                    auto shade = checker_shade(x, y);
+                    bg_r = bg_g = bg_b = shade;
+                }
+
                 auto didx = rsd + x * 3;
-                bgr[didx + 0] = (sb * sa + BG_B * (255 - sa)) / 255;
-                bgr[didx + 1] = (sg * sa + BG_G * (255 - sa)) / 255;
-                bgr[didx + 2] = (sr * sa + BG_R * (255 - sa)) / 255;
+                bgr[didx + 0] = (sb * sa + bg_b * (255 - sa)) / 255;
+                bgr[didx + 1] = (sg * sa + bg_g * (255 - sa)) / 255;
+                bgr[didx + 2] = (sr * sa + bg_r * (255 - sa)) / 255;
             }
         }
     }

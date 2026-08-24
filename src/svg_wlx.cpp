@@ -9,7 +9,10 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 
-static const COLORREF BG_COLOR = RGB(0xff, 0xff, 0xff);
+// Thumbnail flattening (Total Commander's file-list preview) always stays
+// solid white regardless of svg_wlx.ini - a checkerboard would just look
+// like noise at thumbnail size, and it's never been user-configurable.
+static const COLORREF THUMBNAIL_BG_COLOR = RGB(0xff, 0xff, 0xff);
 extern "C" int _fltused = 0;
 static ATOM wnd_class = 0;
 
@@ -20,6 +23,50 @@ extern "C" BYTE __ImageBase;
 inline HINSTANCE hinst()
 {
     return reinterpret_cast<HINSTANCE>(&__ImageBase);
+}
+
+// Settings for the interactive Lister view, read once from svg_wlx.ini
+// (same folder as the plugin DLL, same base name, .ini extension). Missing
+// file or missing keys fall back to the defaults below.
+struct Settings
+{
+    bool     checkerboard;
+    COLORREF transparent_bg;
+};
+
+static Settings load_settings()
+{
+    Settings s;
+    s.checkerboard = true;
+    s.transparent_bg = RGB(0xff, 0xff, 0xff);
+
+    WCHAR path[MAX_PATH];
+    auto len = GetModuleFileName(hinst(), path, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH)
+    {
+        return s;
+    }
+    auto* dot = wcsrchr(path, L'.');
+    if (!dot)
+    {
+        return s;
+    }
+    wcscpy_s(dot, MAX_PATH - static_cast<size_t>(dot - path), L".ini");
+
+    s.checkerboard = GetPrivateProfileIntW(L"Display", L"Checkerboard", 1, path) != 0;
+
+    WCHAR hex[16];
+    GetPrivateProfileStringW(L"Display", L"TransparentBackgroundColor", L"FFFFFF", hex, _countof(hex), path);
+    auto rgb = wcstoul(hex, nullptr, 16);
+    s.transparent_bg = RGB((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
+
+    return s;
+}
+
+static const Settings& settings()
+{
+    static Settings s = load_settings();
+    return s;
 }
 
 BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
@@ -78,6 +125,8 @@ struct SvgCtxt
     LONG    pan_anchor_y;
     POINT   last_mouse;    // last known client-space mouse position, used as
                             // the zoom anchor for +/- keyboard zooming
+    bool    is_animated;   // file uses SMIL/CSS animation we can't play back
+                            // (set once at load; see draw_animated_notice)
     WCHAR   fname[MAX_PATH];
 };
 
@@ -96,6 +145,28 @@ static void clamp_pan(SvgCtxt* ctxt, LONG cx, LONG cy)
     if (ctxt->pan_y > max_y) ctxt->pan_y = max_y;
 }
 
+// Height reserved at the bottom of the client area for the "animated SVG"
+// notice, only for files that need one (see svg_file_has_animation). The
+// notice must never sit on top of any part of the image, so rather than
+// overlay it like the toolbar buttons, the image itself is rasterized,
+// zoomed and panned inside a correspondingly shorter area - every place
+// that used to call GetClientRect to size/center/clamp the image now goes
+// through this instead, or the image and the reserved strip go out of sync.
+static const LONG ANIM_NOTICE_HEIGHT = 20;
+
+static void get_image_area(HWND hwnd, const SvgCtxt* ctxt, RECT& out)
+{
+    GetClientRect(hwnd, &out);
+    if (ctxt && ctxt->is_animated)
+    {
+        out.bottom -= ANIM_NOTICE_HEIGHT;
+        if (out.bottom < out.top)
+        {
+            out.bottom = out.top;
+        }
+    }
+}
+
 // Re-rasterizes at (client size * zoom) unless that exact size was already
 // rendered. Vector re-render (rather than stretching the old bitmap) is what
 // keeps the image crisp across resizes, DPI changes, and zoom changes alike -
@@ -104,7 +175,7 @@ static void clamp_pan(SvgCtxt* ctxt, LONG cx, LONG cy)
 static void render_for_client(SvgCtxt* ctxt, HWND hwnd, bool force = false)
 {
     RECT rc;
-    GetClientRect(hwnd, &rc);
+    get_image_area(hwnd, ctxt, rc);
     auto cx = rc.right - rc.left;
     auto cy = rc.bottom - rc.top;
     if (cx <= 0 || cy <= 0)
@@ -126,9 +197,10 @@ static void render_for_client(SvgCtxt* ctxt, HWND hwnd, bool force = false)
         ctxt->fname,
         target_w,
         target_h,
-        BG_COLOR,
+        settings().transparent_bg,
         ctxt->width,
-        ctxt->height
+        ctxt->height,
+        settings().checkerboard
         );
     ctxt->client_cx = cx;
     ctxt->client_cy = cy;
@@ -249,6 +321,26 @@ static void draw_toolbar_button(HDC hdc, const RECT& r, ToolbarIcon icon)
     DeleteObject(icon_pen);
 }
 
+// Plain-text notice drawn into the bottom strip reserved by ANIM_NOTICE_
+// HEIGHT/get_image_area, for SVGs that use an animation construct we can't
+// play back (see svg_file_has_animation). The strip is never touched by the
+// image blit, so this never overlaps any part of the picture - deliberately
+// plain (no icon, no background) since that's all this needs to be.
+static void draw_animated_notice(HDC hdc, HWND hwnd)
+{
+    static const WCHAR* label = L"Animated SVG - showing first frame only";
+
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    RECT strip = { rc.left, rc.bottom - ANIM_NOTICE_HEIGHT, rc.right, rc.bottom };
+
+    auto old_font = SelectObject(hdc, GetStockObject(DEFAULT_GUI_FONT));
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, RGB(0x60, 0x60, 0x60));
+    DrawText(hdc, label, -1, &strip, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, old_font);
+}
+
 // Single place zoom actually changes - the mouse wheel, +/- keys, and the
 // on-screen toolbar buttons all route through this directly (no
 // SendMessage-to-self indirection), so all three input paths behave
@@ -270,7 +362,7 @@ static void zoom_by(SvgCtxt* ctxt, HWND hwnd, int steps, POINT anchor)
     }
 
     RECT rc;
-    GetClientRect(hwnd, &rc);
+    get_image_area(hwnd, ctxt, rc);
     auto cw = rc.right - rc.left;
     auto ch = rc.bottom - rc.top;
     auto dest_x = (cw > ctxt->width) ? (cw - ctxt->width) / 2 : 0;
@@ -317,7 +409,7 @@ static bool try_toolbar_click(SvgCtxt* ctxt, HWND hwnd, POINT pt)
     if (PtInRect(&r_in, pt))
     {
         RECT rc;
-        GetClientRect(hwnd, &rc);
+        get_image_area(hwnd, ctxt, rc);
         POINT center = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
         zoom_by(ctxt, hwnd, 1, center);
         return true;
@@ -325,7 +417,7 @@ static bool try_toolbar_click(SvgCtxt* ctxt, HWND hwnd, POINT pt)
     if (PtInRect(&r_out, pt))
     {
         RECT rc;
-        GetClientRect(hwnd, &rc);
+        get_image_area(hwnd, ctxt, rc);
         POINT center = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
         zoom_by(ctxt, hwnd, -1, center);
         return true;
@@ -361,9 +453,13 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
             // Already rendered at the exact size we want to show (see
             // render_for_client) - just crop-blit the currently panned-to
-            // sub-rectangle, 1:1, no GDI stretching needed.
-            auto cw = rc.right - rc.left;
-            auto ch = rc.bottom - rc.top;
+            // sub-rectangle, 1:1, no GDI stretching needed. Uses the same
+            // (possibly notice-strip-shortened) area render_for_client sized
+            // the bitmap for, not the raw client rect.
+            RECT image_rc;
+            get_image_area(hwnd, ctxt, image_rc);
+            auto cw = image_rc.right - image_rc.left;
+            auto ch = image_rc.bottom - image_rc.top;
             auto visible_w = (ctxt->width < cw) ? ctxt->width : cw;
             auto visible_h = (ctxt->height < ch) ? ctxt->height : ch;
             auto dest_x = (cw > ctxt->width) ? (cw - ctxt->width) / 2 : 0;
@@ -398,6 +494,10 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 &rc,
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE
                 );
+        }
+        if (ctxt && ctxt->bitmap && ctxt->is_animated)
+        {
+            draw_animated_notice(hdc, hwnd);
         }
         EndPaint(hwnd, &ps);
         return 0;
@@ -477,7 +577,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             ctxt->last_mouse.y = GET_Y_LPARAM(lp);
             if (ctxt->panning)
             {
-                GetClientRect(hwnd, &rc);
+                get_image_area(hwnd, ctxt, rc);
                 auto dx = ctxt->last_mouse.x - ctxt->pan_anchor.x;
                 auto dy = ctxt->last_mouse.y - ctxt->pan_anchor.y;
                 ctxt->pan_x = ctxt->pan_anchor_x - dx;
@@ -569,7 +669,7 @@ PLUGIN_API HBITMAP WINAPI ListGetPreviewBitmapW(
     )
 {
     LONG dummy_w, dummy_h;
-    return bitmap_from_svg(fname, width, height, BG_COLOR, dummy_w, dummy_h);
+    return bitmap_from_svg(fname, width, height, THUMBNAIL_BG_COLOR, dummy_w, dummy_h);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -629,6 +729,7 @@ PLUGIN_API HWND WINAPI ListLoadW(HWND parent, PCWSTR fname, int)
         ctxt->last_mouse.x = width / 2;
         ctxt->last_mouse.y = height / 2;
         wcsncpy_s(ctxt->fname, MAX_PATH, fname, _TRUNCATE);
+        ctxt->is_animated = svg_file_has_animation(fname);
         SetWindowLongPtr(
             hwnd,
             GWLP_USERDATA,
@@ -687,6 +788,7 @@ PLUGIN_API int WINAPI ListLoadNextW(HWND, HWND svg_wnd, PCWSTR fname, int)
     }
 
     wcsncpy_s(ctxt->fname, MAX_PATH, fname, _TRUNCATE);
+    ctxt->is_animated = svg_file_has_animation(fname);
     ctxt->zoom = 1.0f;  // new file: reset zoom/pan to fit-to-window
     ctxt->pan_x = 0;
     ctxt->pan_y = 0;

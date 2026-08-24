@@ -18,14 +18,30 @@ Contents of this package
 |--------------------------------|---------------------------------------------------|
 | `svg_wlx.wlx`                     | 32-bit plugin binary (for 32-bit Total Commander) |
 | `svg_wlx.wlx64`                   | 64-bit plugin binary (for 64-bit Total Commander) |
+| `svg_wlx.ini`                  | Optional settings file (see "Configuration" below)|
 | `pluginst.inf`                | Install descriptor (enables drag-and-drop install)|
 | `README.md`                   | Project README                                    |
 | `LICENSE`                     | svg_wlx license (MIT)                             |
 | `THIRD_PARTY_NOTICES.md`      | Licenses of statically-linked third-party code    |
 
-No `.ini` file is used — nothing in the plugin reads one. If a diagram's
-text is too small to read at the current window size, use the built-in
-zoom (mouse wheel or +/-, drag to pan) instead; see "Zoom and pan" below.
+If a diagram's text is too small to read at the current window size, use
+the built-in zoom (mouse wheel or +/-, drag to pan) instead; see "Zoom and
+pan" below.
+
+
+Configuration
+-------------
+
+`svg_wlx.ini` is optional - if it's missing, or a setting in it is missing,
+the plugin uses the defaults below. It must sit next to `svg_wlx.wlx` /
+`svg_wlx.wlx64` and share their base name. Only the interactive Lister
+preview is affected; Total Commander's file-list thumbnail preview always
+flattens transparent SVGs onto solid white.
+
+| Key                          | Default   | Meaning                                                              |
+|-------------------------------|-----------|------------------------------------------------------------------------|
+| `Checkerboard`                 | `1`       | `1` shows a light/dark checkerboard behind transparent pixels (the usual image-editor convention); `0` fills them with `TransparentBackgroundColor` instead. |
+| `TransparentBackgroundColor`   | `FFFFFF`  | Hex RGB (no `#`) used to fill transparent pixels when `Checkerboard=0`. Ignored otherwise. |
 
 
 Installation
@@ -101,6 +117,25 @@ file before parsing — this was already the case before this fork. A
 `.svgz` file will currently just fail to load ("SVG unavailable") rather
 than render. Plain `.svg` files are unaffected.
 
+**Known limitation: animated SVGs render as a static first frame.**
+LunaSVG has no SMIL (`<animate>`, `<animateTransform>`, `<set>`, etc.) or
+CSS (`@keyframes`, `animation:`) animation support - it silently ignores
+those elements/properties rather than erroring on them, so the file still
+renders, just frozen at its initial state. Building a real animation
+engine (timing, easing, playback) was evaluated and deliberately not
+pursued - out of proportion for a file-manager preview plugin. To avoid
+that looking like the animation "just isn't playing" for no reason, the
+plugin detects animation constructs in the file and shows a small
+"Animated SVG - showing first frame only" notice in a reserved strip at
+the bottom of the Lister view (it never overlaps the image itself).
+
+**Fixed: a UTF-8 BOM at the start of an SVG file broke rendering
+entirely.** Some SVG exporters emit one; LunaSVG's parser expects the
+first byte to be `<`, so a leading BOM made it reject the whole document
+("SVG unavailable") even though the rest of the file was perfectly valid
+markup. The plugin now strips a leading BOM before handing the file to
+the parser.
+
 Two more fixes worth calling out from this fork's rewrite:
 
 - **Fixed a "This is not a valid plugin!" install error.** Two related
@@ -133,6 +168,14 @@ pan" above. Not present in the original upstream project. Renders always
 stay crisp at any zoom level, since zooming re-rasterizes the vector SVG
 at the new size rather than stretching a fixed bitmap.
 
+**New: transparency rendered as a checkerboard, not flattened to white.**
+Previously any transparent pixel in an SVG was always composited onto
+solid white before display, so a logo meant for a transparent background
+would just show white behind it. The interactive Lister view now shows
+the usual image-editor checkerboard there instead (configurable via
+`svg_wlx.ini` — see "Configuration" above); Total Commander's file-list
+thumbnail preview is unchanged and still flattens to white.
+
 **Hardening from an internal security review of the plugin's own code**
 (the vendored LunaSVG/PlutoVG rendering library itself was explicitly out
 of scope — its handling of malformed SVG content is its own responsibility):
@@ -151,4 +194,8 @@ Build-wise, the plugin also moved from a Python/SCons build script
 alongside the project) to a plain MSVC solution/project
 (`svg_wlx.sln`/`svg_wlx.vcxproj`), so it can be built with just Visual
 Studio/MSBuild — no Python, no SCons, no Rust, nothing beyond a standard
-C++ toolchain.
+C++ toolchain. The project file no longer pins a specific
+`PlatformToolset` version (it previously hardcoded one, `v145`, that
+doesn't exist on some Visual Studio installs and could hang the IDE on
+project load); it now uses `$(DefaultPlatformToolset)`, which resolves to
+whatever toolset the running Visual Studio install actually has.
