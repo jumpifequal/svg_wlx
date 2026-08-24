@@ -1,4 +1,41 @@
+#include <windows.h>
 #include "resource.h"
 
 IDC_CLOSED_HAND CURSOR "res\\closed_hand.cur"
 IDC_OPEN_HAND   CURSOR "res\\open_hand.cur"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Version Information resources
+//
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION VER_FILEVERSION
+    PRODUCTVERSION VER_PRODUCTVERSION
+    FILEOS          VOS_NT_WINDOWS32
+    FILETYPE        VFT_DLL
+    FILESUBTYPE     VFT2_UNKNOWN
+    BEGIN
+        BLOCK "StringFileInfo"
+        BEGIN
+            BLOCK "040904B0"
+            BEGIN
+#ifdef _WIN64
+                VALUE "OriginalFilename", "svg_wlx.wlx64"
+#else
+                VALUE "OriginalFilename", "svg_wlx.wlx"
+#endif
+                VALUE "LegalCopyright", "Copyright \xA9 Rocco Matano, 2026"
+                VALUE "ProductVersion", VER_PRODUCTVERSION_STR
+                VALUE "ProductName", "SVG Viewer Lister Plugin"
+                VALUE "InternalName", "svg_wlx"
+                VALUE "CompanyName", ""
+                VALUE "Comments", "SVG Lister Plugin for Total Commander"
+                VALUE "FileVersion", VER_FILEVERSION_STR
+                VALUE "FileDescription", "SVG Viewer Lister Plugin for Total Commander"
+            END
+        END
+        BLOCK "VarFileInfo"
+        BEGIN
+            VALUE "Translation", 0x0409, 1200
+        END
+    END
