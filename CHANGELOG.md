@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.1.3 - Don't stretch small images on open
+
+* Changed: an SVG smaller than the Lister window now opens at its native pixel size (centered), instead of being stretched to fill the window. Press **F** (or double-click) to fit it to the window as before; resizing the window keeps native size until you do.
+
 ## v2.1.2 - Transparency, animated-SVG handling, and a build-tooling fix
 
 * Added: transparent SVG backgrounds now render as a light/dark checkerboard in the interactive Lister view, the usual image-editor convention for showing transparency (matches other viewers instead of always flattening to solid white).

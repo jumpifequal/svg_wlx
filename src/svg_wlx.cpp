@@ -127,6 +127,11 @@ struct SvgCtxt
                             // the zoom anchor for +/- keyboard zooming
     bool    is_animated;   // file uses SMIL/CSS animation we can't play back
                             // (set once at load; see draw_animated_notice)
+    bool    natural_size;  // true right after (re)loading a file, before any
+                            // explicit zoom/fit action: an image smaller than
+                            // the window is shown at its native pixel size
+                            // instead of stretched to fill the window. F /
+                            // double-click / an explicit zoom step clears this.
     WCHAR   fname[MAX_PATH];
 };
 
@@ -200,7 +205,8 @@ static void render_for_client(SvgCtxt* ctxt, HWND hwnd, bool force = false)
         settings().transparent_bg,
         ctxt->width,
         ctxt->height,
-        settings().checkerboard
+        settings().checkerboard,
+        !ctxt->natural_size
         );
     ctxt->client_cx = cx;
     ctxt->client_cy = cy;
@@ -226,6 +232,7 @@ static void reset_to_fit(SvgCtxt* ctxt, HWND hwnd)
     ctxt->zoom = 1.0f;
     ctxt->pan_x = 0;
     ctxt->pan_y = 0;
+    ctxt->natural_size = false;
     render_for_client(ctxt, hwnd, true);
     InvalidateRect(hwnd, nullptr, false);
     notify_fit_state(hwnd, true);
@@ -351,6 +358,21 @@ static void zoom_by(SvgCtxt* ctxt, HWND hwnd, int steps, POINT anchor)
     if (!ctxt || !ctxt->bitmap || steps == 0)
     {
         return;
+    }
+
+    if (ctxt->natural_size)
+    {
+        // Was showing the image at native (unscaled) size rather than
+        // ctxt->zoom's usual "fraction of window" meaning. Re-derive the
+        // zoom level that reproduces what's actually on screen right now,
+        // so the first zoom step continues smoothly instead of jumping the
+        // image straight to a window-filling size.
+        auto cx = (ctxt->client_cx > 0) ? ctxt->client_cx : 1;
+        auto cy = (ctxt->client_cy > 0) ? ctxt->client_cy : 1;
+        auto rx = float(ctxt->width) / float(cx);
+        auto ry = float(ctxt->height) / float(cy);
+        ctxt->zoom = (rx > ry) ? rx : ry;
+        ctxt->natural_size = false;
     }
 
     auto new_zoom = ctxt->zoom * powf(ZOOM_STEP, float(steps));
@@ -724,6 +746,7 @@ PLUGIN_API HWND WINAPI ListLoadW(HWND parent, PCWSTR fname, int)
         ctxt->zoom = 1.0f;
         ctxt->pan_x = 0;
         ctxt->pan_y = 0;
+        ctxt->natural_size = true;
         ctxt->wheel_accum = 0;
         ctxt->panning = false;
         ctxt->last_mouse.x = width / 2;
@@ -789,9 +812,10 @@ PLUGIN_API int WINAPI ListLoadNextW(HWND, HWND svg_wnd, PCWSTR fname, int)
 
     wcsncpy_s(ctxt->fname, MAX_PATH, fname, _TRUNCATE);
     ctxt->is_animated = svg_file_has_animation(fname);
-    ctxt->zoom = 1.0f;  // new file: reset zoom/pan to fit-to-window
+    ctxt->zoom = 1.0f;  // new file: reset zoom/pan to natural size (until F)
     ctxt->pan_x = 0;
     ctxt->pan_y = 0;
+    ctxt->natural_size = true;
     render_for_client(ctxt, svg_wnd, true);
     InvalidateRect(svg_wnd, nullptr, true);
     notify_fit_state(svg_wnd, true);

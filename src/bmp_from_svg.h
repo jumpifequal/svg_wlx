@@ -9,7 +9,8 @@ HBITMAP bitmap_from_svg(
     COLORREF back_color,
     LONG& width,
     LONG& height,
-    bool checkerboard = false
+    bool checkerboard = false,
+    bool allow_upscale = true
     );
 
 // True if the file's raw markup uses any SMIL or CSS animation construct

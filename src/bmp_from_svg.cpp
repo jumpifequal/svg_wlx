@@ -179,7 +179,8 @@ HBITMAP bitmap_from_svg(
     COLORREF back_color,
     LONG& width,
     LONG& height,
-    bool checkerboard
+    bool checkerboard,
+    bool allow_upscale
     )
 {
     DWORD size = 0;
@@ -223,6 +224,10 @@ HBITMAP bitmap_from_svg(
     auto scaleX = float(max_width) / doc_width;
     auto scaleY = float(max_height) / doc_height;
     auto scale = (scaleX < scaleY) ? scaleX : scaleY;
+    if (!allow_upscale && scale > 1.0f)
+    {
+        scale = 1.0f;
+    }
     auto w = LONG(doc_width * scale);
     auto h = LONG(doc_height * scale);
     width = w;
