@@ -43,6 +43,8 @@ Features
 - Both binaries are statically linked with no runtime dependencies beyond
   standard Windows DLLs (`KERNEL32`, `USER32`, `GDI32`).
 
+![Transparent SVG shown over a checkerboard background in Total Commander's Lister](samples/screenshot-checkerboard-transparency.png "Checkerboard transparency in the Lister view")
+
 
 Installation
 ------------
